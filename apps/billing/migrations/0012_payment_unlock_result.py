@@ -8,13 +8,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('billing', '0011_new_tariffs'),
-        ('photos', '0005_free_preview'),
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='payment',
-            name='unlock_result',
-            field=models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='unlock_payments', to='photos.generatedresult'),
-        ),
     ]

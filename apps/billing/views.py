@@ -15,9 +15,6 @@ from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework.views import APIView
 
 from apps.accounts import attribution
-from apps.photos.models import GeneratedResult
-from apps.photos.services import free_preview
-from apps.photos.tasks import send_order_result_email
 
 from .models import GenerationPackage, Payment, GenerationLedgerEntry, PromoCode
 from .payanyway import build_payment_request, verify_pay_url_signature
@@ -123,17 +120,7 @@ class BillingConfigView(APIView):
                     "promo_price": str(p.first_purchase_price) if promo_active else None,
                 }
             )
-        # Что предлагать под бесплатным превью: «это фото — 49 ₽» и «5 фото — 199 ₽»
-        single, bundle = catalog.unlock_offers()
-        return Response(
-            {
-                "packages": packages,
-                "unlock_offers": {
-                    "single": single.id if single else None,
-                    "bundle": bundle.id if bundle else None,
-                },
-            }
-        )
+        return Response({"packages": packages})
 
 
 class PromoCodeCheckView(APIView):
@@ -203,14 +190,6 @@ class CreateTopupView(APIView):
                 )
             amount, discount_amount = promo_code.compute_discount(amount)
 
-        # «Скачать в HD» без генераций: после оплаты вебхук сам разблокирует это фото
-        unlock_result = None
-        raw_unlock = request.data.get("unlock_result_id")
-        if raw_unlock:
-            unlock_result = GeneratedResult.objects.filter(
-                id=raw_unlock, order__user=request.user, is_free_preview=True, unlocked=False
-            ).first()
-
         payment = Payment.objects.create(
             user=request.user,
             package=package,
@@ -219,7 +198,6 @@ class CreateTopupView(APIView):
             is_test=services.is_test_payment(request.user, amount),
             promo_code=promo_code,
             discount_amount=discount_amount,
-            unlock_result=unlock_result,
             **attribution.fields_for_payment(request.user),
         )
 
@@ -372,18 +350,6 @@ def payanyway_result(request):
             payment=payment,
         )
 
-        # Оплата из «Скачать в HD»: списываем 1 из только что начисленных и
-        # открываем оригинал — пользователь сразу видит фото без знака
-        if payment.unlock_result_id:
-            try:
-                free_preview.unlock(payment.unlock_result, payment.user)
-            except services.InsufficientBalanceError:
-                pass  # не должно случиться сразу после начисления; фото откроется вручную
-            else:
-                # Фото в HD — сразу на почту: из письма-напоминания часто платят
-                # с телефона без входа на сайт, и иначе забрать фото негде
-                result_id = payment.unlock_result_id
-                transaction.on_commit(lambda: send_order_result_email.delay(result_id))
 
         # on_commit — задачи ставятся в очередь, только если транзакция
         # успешно зафиксирована (иначе Celery-воркер может прочитать ещё
@@ -453,71 +419,4 @@ class BotPayRedirectView(View):
             {"action_url": req["action_url"], "fields": req["fields"]},
         )
 
-class PaymentPageView(TemplateView):
-    """/payment/ — карточки тарифов рендерятся на сервере (цены видны сразу и
-    без JS). ?package=<slug> — какой пакет выбрать заранее (ссылки с главной,
-    «Скачать в HD»); без него выбран пакет с is_featured."""
 
-    template_name = "payment.html"
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        tariffs = catalog.public_tariffs()
-        wanted = self.request.GET.get("package", "")
-        selected = next((t for t in tariffs if t.slug and t.slug == wanted), None) or next(
-            (t for t in tariffs if t.package.is_featured), tariffs[0] if tariffs else None
-        )
-        context["tariffs"] = tariffs
-        context["selected_package_id"] = selected.id if selected else None
-        # Допродажа по прямой ссылке (?package=more5): рендерим карточку скрытой —
-        # JS покажет и выберет её, только если API подтвердит, что пользователь
-        # уже платил (иначе сервер всё равно отклонит такой платёж)
-        context["hidden_tariffs"] = [t for t in catalog.upsell_tariffs() if wanted and t.slug == wanted]
-        # Допродажа (paid_only) на сервере не рендерится — сервер не знает, кто
-        # смотрит (авторизация по JWT в браузере); её дорисовывает JS для платившим
-        context["requested_package"] = wanted
-        # Пришли из «Скачать в HD»: после оплаты это фото разблокируется само.
-        # Принадлежность фото пользователю проверяется при создании платежа.
-        unlock = self.request.GET.get("unlock", "")
-        context["unlock_result_id"] = unlock if unlock.isdigit() else ""
-        return context
-
-
-class UnlockPayLinkView(View):
-    """
-    GET /billing/unlock/<result_id>/?t=<токен>[&package=<slug>] — ссылка из
-    письма-напоминания «скачайте в HD за 49 ₽». Работает без входа на сайт
-    (подписанный токен, services.make_unlock_link): создаёт платёж с
-    разблокировкой этого фото и сразу отправляет на PayAnyWay. Пакет — «одно
-    фото» по умолчанию или второй вариант (package=optimal) из unlock_offers.
-    """
-
-    def get(self, request, result_id):
-        user_id = services.read_unlock_link_token(result_id, request.GET.get("t", ""))
-        if user_id is None:
-            return render(
-                request, "billing_bot_pay_error.html",
-                {"message": "Ссылка недействительна или устарела. Откройте фото в разделе «Мои результаты» на сайте."},
-                status=400,
-            )
-
-        result = GeneratedResult.objects.select_related("order__user").filter(id=result_id, order__user_id=user_id).first()
-        if result is None:
-            return render(request, "billing_bot_pay_error.html", {"message": "Фото не найдено."}, status=404)
-        if not result.is_locked:
-            return render(
-                request, "billing_bot_pay_error.html",
-                {"message": "Это фото уже разблокировано — оно в разделе «Мои результаты» и у вас на почте."},
-            )
-
-        offers = [p for p in catalog.unlock_offers() if p is not None]
-        wanted = request.GET.get("package", "")
-        package = next((p for p in offers if p.slug == wanted), offers[0] if offers else None)
-        if package is None:
-            return render(request, "billing_bot_pay_error.html", {"message": "Оплата временно недоступна."}, status=503)
-
-        user = result.order.user
-        payment = services.create_unlock_payment(user, package, result)
-        description = f"Пакет «{package.title}» — {package.generations} генераций (фото в HD)"
-        req = build_payment_request(payment, description, email=user.email or None)
-        return render(request, "billing_bot_pay.html", {"action_url": req["action_url"], "fields": req["fields"]})

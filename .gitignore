@@ -1,5 +1,4 @@
 __pycache__/
-config/settings.py
 *.pyc
 .env
 db.sqlite3

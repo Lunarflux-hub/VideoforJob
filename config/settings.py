@@ -5,6 +5,7 @@
 """
 import mimetypes
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import environ
@@ -42,12 +43,10 @@ INSTALLED_APPS = [
     "anymail",
 
     "apps.accounts",
-    "apps.photos",
-    "apps.social_auth",
     "apps.support",
     "apps.billing",
     "apps.telegram_bot",
-    "apps.carousels",
+    "apps.videos",
 ]
 
 MIDDLEWARE = [
@@ -186,6 +185,7 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TASK_TIME_LIMIT = 5 * 60  # 5 минут на генерацию — с запасом
+CELERY_TASK_ALWAYS_EAGER = env.bool("CELERY_TASK_ALWAYS_EAGER", default=False)
 
 # --- Polza.ai --------------------------------------------------------------
 POLZA_BASE_URL = env("POLZA_BASE_URL", default="https://polza.ai/api/v1")
@@ -205,6 +205,26 @@ POLZA_CHAT_BASE_URL = env("POLZA_CHAT_BASE_URL", default="https://polza.ai/api/v
 # ~1,15 ₽ и ~15 с у anthropic/claude-sonnet-5 при сопоставимом качестве текста;
 # nano/deepseek/gemini-lite дешевле, но ломают структуру или русский язык.
 POLZA_TEXT_MODEL = env("POLZA_TEXT_MODEL", default="openai/gpt-5.4-mini")
+
+# --- Polza.ai Video (VideoLab AI MVP) --------------------------------------
+# Документация Polza: google/gemini-omni-1.1-flash или gemini-omni-video
+POLZA_VIDEO_MODEL = env("POLZA_VIDEO_MODEL", default="google/gemini-omni-1.1-flash")
+POLZA_VIDEO_TIMEOUT_SEC = env.int("POLZA_VIDEO_TIMEOUT_SEC", default=300)
+POLZA_VIDEO_POLL_INTERVAL_SEC = env.int("POLZA_VIDEO_POLL_INTERVAL_SEC", default=5)
+
+# --- Video Limits & Retention ----------------------------------------------
+VIDEO_MAX_DURATION_SEC = env.int("VIDEO_MAX_DURATION_SEC", default=10)
+VIDEO_MAX_SIZE_MB = env.int("VIDEO_MAX_SIZE_MB", default=50)
+VIDEO_RETENTION_HOURS = env.int("VIDEO_RETENTION_HOURS", default=48)
+
+# --- Video Pricing & Unit Economics (RUB) ----------------------------------
+VIDEO_PRICE_SINGLE = Decimal(env.str("VIDEO_PRICE_SINGLE", default="299.00"))
+VIDEO_PRICE_PACK = Decimal(env.str("VIDEO_PRICE_PACK", default="849.00"))
+CREDIT_BASE_REVENUE_RUB = Decimal(env.str("CREDIT_BASE_REVENUE_RUB", default="219.00"))
+INFRASTRUCTURE_COST_RUB = Decimal(env.str("INFRASTRUCTURE_COST_RUB", default="10.00"))
+PAYMENT_FEE_RATE = Decimal(env.str("PAYMENT_FEE_RATE", default="0.035"))
+TAX_REGIME = env("TAX_REGIME", default="usn_income")
+POLZA_PRICING_VERSION = env("POLZA_PRICING_VERSION", default="v1.1-2026-10")
 
 # --- Карусели для Instagram (бета) -----------------------------------------
 # Цветные эмодзи на слайдах — Noto Color Emoji из пакета fonts-noto-color-emoji
@@ -291,6 +311,8 @@ TELEGRAM_BOT_TOKEN = env("TELEGRAM_BOT_TOKEN", default="")
 # Ссылка на канал с отзывами — кнопка в стартовом меню бота показывается,
 # только если эта переменная задана (пусто — кнопка скрыта).
 TELEGRAM_REVIEWS_CHANNEL_URL = env("TELEGRAM_REVIEWS_CHANNEL_URL", default="")
+# Если на хостинге/сервере заблокирован IPv4 до api.telegram.org — включите True
+TELEGRAM_FORCE_IPV6 = env.bool("TELEGRAM_FORCE_IPV6", default=False)
 
 # --- PayAnyWay / Moneta.ru (оплата пополнения баланса) ----------------------
 # Номер расширенного счёта в системе MONETA.RU (аналог MerchantLogin)

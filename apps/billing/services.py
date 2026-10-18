@@ -27,17 +27,17 @@ PAY_LINK_SALT = "billing.pay_link"
 
 
 class InsufficientBalanceError(Exception):
-    """Недостаточно генераций на балансе для списания."""
+    """Недостаточно кредитов на балансе для списания."""
 
-    def __init__(self, balance: int, required: int):
-        self.balance = balance
-        self.required = required
-        super().__init__(f"balance={balance}, required={required}")
+    def __init__(self, balance: Decimal | int | float, required: Decimal | int | float):
+        self.balance = Decimal(str(balance))
+        self.required = Decimal(str(required))
+        super().__init__(f"balance={self.balance}, required={self.required}")
 
 
-def get_balance(user) -> int:
+def get_balance(user) -> Decimal:
     balance = UserBalance.objects.filter(user=user).first()
-    return balance.generations if balance else 0
+    return balance.generations if balance else Decimal("0.0")
 
 
 def _get_or_create_locked_balance(user) -> UserBalance:
@@ -49,25 +49,25 @@ def _get_or_create_locked_balance(user) -> UserBalance:
 
 def lock_balance(user) -> UserBalance:
     """Публичная обёртка для вызывающего кода, которому нужно сериализовать
-    решения по пользователю (например, выдачу бесплатного превью в
-    photos.views.OrderCreateView). Только внутри transaction.atomic()."""
+    решения по пользователю. Только внутри transaction.atomic()."""
     return _get_or_create_locked_balance(user)
 
 
 @transaction.atomic
-def credit_generations(user, amount: int, *, kind=GenerationLedgerEntry.Kind.TOPUP, payment=None) -> UserBalance:
-    """Начисляет `amount` генераций (используется при оплате пакета)."""
-    if amount <= 0:
+def credit_generations(user, amount: Decimal | int | float, *, kind=GenerationLedgerEntry.Kind.TOPUP, payment=None) -> UserBalance:
+    """Начисляет `amount` кредитов (используется при оплате пакета или начислении бонусов)."""
+    dec_amount = Decimal(str(amount))
+    if dec_amount <= Decimal("0"):
         raise ValueError("amount must be positive")
 
     balance = _get_or_create_locked_balance(user)
-    balance.generations += amount
+    balance.generations += dec_amount
     balance.save(update_fields=["generations", "updated_at"])
 
     GenerationLedgerEntry.objects.create(
         user=user,
         kind=kind,
-        amount=amount,
+        amount=dec_amount,
         balance_after=balance.generations,
         payment=payment,
     )
@@ -75,31 +75,72 @@ def credit_generations(user, amount: int, *, kind=GenerationLedgerEntry.Kind.TOP
 
 
 @transaction.atomic
-def spend_generation(user, order, amount: int = 1) -> UserBalance:
-    """
-    Атомарно списывает `amount` генераций перед постановкой заказа в очередь.
-    Бросает InsufficientBalanceError, если баланса не хватает — вызывающий
-    код должен создавать Order/ставить Celery-задачу только после успешного
-    списания.
-    Возврат при неудачной генерации НЕ выполняется (продуктовое решение) —
-    генерация считается использованной попыткой.
-    """
-    if amount <= 0:
+def spend_generation(user, amount: Decimal | int | float = Decimal("1.0")) -> UserBalance:
+    """Атомарно списывает `amount` кредитов с баланса."""
+    dec_amount = Decimal(str(amount))
+    if dec_amount <= Decimal("0"):
         raise ValueError("amount must be positive")
 
     balance = _get_or_create_locked_balance(user)
-    if balance.generations < amount:
-        raise InsufficientBalanceError(balance.generations, amount)
+    if balance.generations < dec_amount:
+        raise InsufficientBalanceError(balance.generations, dec_amount)
 
-    balance.generations -= amount
+    balance.generations -= dec_amount
     balance.save(update_fields=["generations", "updated_at"])
 
     GenerationLedgerEntry.objects.create(
         user=user,
         kind=GenerationLedgerEntry.Kind.SPEND,
-        amount=-amount,
+        amount=-dec_amount,
         balance_after=balance.generations,
-        order=order,
+    )
+    return balance
+
+
+@transaction.atomic
+def spend_generation_for_video(user, video_job, amount: Decimal | int | float = Decimal("1.0")) -> UserBalance:
+    """Атомарно списывает `amount` кредитов для задачи видео VideoJob по матрице Tiered Billing."""
+    dec_amount = Decimal(str(amount))
+    if dec_amount <= Decimal("0"):
+        raise ValueError("amount must be positive")
+
+    balance = _get_or_create_locked_balance(user)
+    if balance.generations < dec_amount:
+        raise InsufficientBalanceError(balance.generations, dec_amount)
+
+    balance.generations -= dec_amount
+    balance.save(update_fields=["generations", "updated_at"])
+
+    GenerationLedgerEntry.objects.create(
+        user=user,
+        kind=GenerationLedgerEntry.Kind.SPEND,
+        amount=-dec_amount,
+        balance_after=balance.generations,
+        video_job=video_job,
+    )
+    return balance
+
+
+@transaction.atomic
+def refund_generation(user, video_job=None, amount: Decimal | int | float = Decimal("1.0"), reason: str = "") -> UserBalance:
+    """
+    Атомарно возвращает `amount` кредитов на баланс пользователя при
+    технической ошибке генерации (требование ТЗ 3.7 и бизнес-плана разд. 13).
+    """
+    dec_amount = Decimal(str(amount))
+    if dec_amount <= Decimal("0"):
+        raise ValueError("amount must be positive")
+
+    balance = _get_or_create_locked_balance(user)
+    balance.generations += dec_amount
+    balance.save(update_fields=["generations", "updated_at"])
+
+    GenerationLedgerEntry.objects.create(
+        user=user,
+        kind=GenerationLedgerEntry.Kind.REFUND,
+        amount=dec_amount,
+        balance_after=balance.generations,
+        video_job=video_job,
     )
     return balance
 
@@ -137,43 +178,6 @@ def create_topup_payment(user, package: GenerationPackage) -> Payment:
     )
 
 
-def create_unlock_payment(user, package: GenerationPackage, result) -> Payment:
-    """Платёж «скачать это фото в HD»: после подтверждения вебхук начислит
-    генерации пакета и сразу спишет одну на разблокировку result
-    (views.payanyway_result). Без промокода — оплата в один шаг."""
-    amount = base_amount_for(package, user)
-    return Payment.objects.create(
-        user=user,
-        package=package,
-        amount=amount,
-        generations_granted=package.generations,
-        is_test=is_test_payment(user, amount),
-        unlock_result=result,
-        **attribution.fields_for_payment(user),
-    )
-
-
-# Ссылка «оплатить и скачать в HD» из письма-напоминания: открывается без
-# входа на сайт (человек часто читает почту на другом устройстве), поэтому
-# адресуется подписанным токеном с id результата и пользователя.
-UNLOCK_LINK_SALT = "billing.unlock_link"
-UNLOCK_LINK_MAX_AGE = 7 * 24 * 3600
-
-
-def make_unlock_link(result) -> str:
-    token = signing.dumps({"r": result.id, "u": result.order.user_id}, salt=UNLOCK_LINK_SALT)
-    return f"{settings.FRONTEND_URL}/billing/unlock/{result.id}/?t={token}"
-
-
-def read_unlock_link_token(result_id: int, token: str) -> int | None:
-    """id пользователя из токена или None, если токен чужой/подделан/устарел."""
-    try:
-        value = signing.loads(token, salt=UNLOCK_LINK_SALT, max_age=UNLOCK_LINK_MAX_AGE)
-    except signing.BadSignature:
-        return None
-    if not isinstance(value, dict) or value.get("r") != result_id:
-        return None
-    return value.get("u")
 
 
 def make_pay_link(payment: Payment) -> str:

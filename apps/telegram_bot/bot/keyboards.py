@@ -3,6 +3,7 @@
 apps/photos/serializers.py::OrderCreateSerializer — при изменении списка
 там нужно поправить и здесь.
 """
+from decimal import Decimal
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from django.conf import settings
 
@@ -52,21 +53,128 @@ BACKGROUND_COLOR_PRESETS = {
 SKIP = "skip"
 
 
+MENU_VIDEO_NEW_CB = "video:new"
+MENU_VIDEO_EXAMPLES_CB = "video:examples"
+MENU_VIDEO_HISTORY_CB = "video:history"
+
+
 def main_menu() -> InlineKeyboardMarkup:
-    """Навигация — кнопки под сообщением, а не постоянная клавиатура снизу."""
+    """Главное меню VideoLab AI по ТЗ раздел 3.1."""
     rows = [
-        [InlineKeyboardButton(text=MAIN_MENU_NEW_ORDER, callback_data=MENU_NEW_ORDER_CB)],
+        [InlineKeyboardButton(text="🎬 Изменить видео", callback_data=MENU_VIDEO_NEW_CB)],
+        [InlineKeyboardButton(text="👀 Посмотреть примеры", callback_data=MENU_VIDEO_EXAMPLES_CB)],
         [
-            InlineKeyboardButton(text=MAIN_MENU_HISTORY, callback_data=MENU_HISTORY_CB),
-            InlineKeyboardButton(text=MAIN_MENU_BALANCE, callback_data=MENU_BALANCE_CB),
+            InlineKeyboardButton(text="💳 Купить обработки", callback_data=MENU_TOPUP_CB),
+            InlineKeyboardButton(text="📁 Мои обработки", callback_data=MENU_VIDEO_HISTORY_CB),
         ],
         [
-            InlineKeyboardButton(text=MAIN_MENU_PROFILE, callback_data=MENU_PROFILE_CB),
-            InlineKeyboardButton(text=MAIN_MENU_SUPPORT, callback_data=MENU_SUPPORT_CB),
+            InlineKeyboardButton(text="💰 Баланс", callback_data=MENU_BALANCE_CB),
+            InlineKeyboardButton(text="💬 Поддержка", callback_data=MENU_SUPPORT_CB),
         ],
     ]
     if settings.TELEGRAM_REVIEWS_CHANNEL_URL:
         rows.append([InlineKeyboardButton(text=MAIN_MENU_REVIEWS, url=settings.TELEGRAM_REVIEWS_CHANNEL_URL)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def video_purpose_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="📱 Соцсети / Reels", callback_data="purpose:smm"),
+                InlineKeyboardButton(text="🛍 Реклама товаров", callback_data="purpose:business"),
+            ],
+            [
+                InlineKeyboardButton(text="👤 Личный контент", callback_data="purpose:personal"),
+                InlineKeyboardButton(text="⏩ Пропустить", callback_data="purpose:skip"),
+            ],
+            [InlineKeyboardButton(text="⬅️ В меню", callback_data=MENU_HOME_CB)],
+        ]
+    )
+
+
+def video_cancel_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="video:cancel")]]
+    )
+
+
+def video_category_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🌅 Атмосфера и освещение", callback_data="video_cat:lighting")],
+            [InlineKeyboardButton(text="✨ Визуальный эффект / объект", callback_data="video_cat:effect")],
+            [InlineKeyboardButton(text="🎨 Стилизация сцены", callback_data="video_cat:style")],
+            [InlineKeyboardButton(text="✍️ Свой вариант инструкции", callback_data="video_cat:custom")],
+            [InlineKeyboardButton(text="❌ Отмена", callback_data="video:cancel")],
+        ]
+    )
+
+
+def video_presets_keyboard(presets) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text=p.title, callback_data=f"video_preset:{p.id}")]
+        for p in presets
+    ]
+    rows.append([InlineKeyboardButton(text="✍️ Ввести свой вариант", callback_data="video_cat:custom")])
+    rows.append([InlineKeyboardButton(text="⬅️ Назад к категориям", callback_data="video_cat:back")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def video_confirm_keyboard(
+    credits_amount: Decimal | int | float = Decimal("1.0"),
+    current_quality: str = "720p",
+) -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения с кнопками быстрого переключения качества по Матрице Tiered Billing."""
+    dec_cr = Decimal(str(credits_amount))
+    cr_str = f"{dec_cr:.1f}" if dec_cr % 1 != 0 else f"{int(dec_cr)}"
+
+    tiers = [
+        ("draft", "⚡ Черновой 0.5 кр"),
+        ("720p", "🌟 720p 1.0 кр"),
+        ("1080p", "💎 1080p 1.5 кр"),
+        ("4k", "🎬 4K 2.0 кр"),
+    ]
+    tier_buttons = []
+    for key, label in tiers:
+        is_active = (key == current_quality)
+        text = f"✅ {label}" if is_active else label
+        tier_buttons.append(InlineKeyboardButton(text=text, callback_data=f"video:quality:{key}"))
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"🚀 Запустить обработку ({cr_str} кр.)", callback_data="video:confirm_run")],
+            tier_buttons[:2],
+            tier_buttons[2:],
+            [
+                InlineKeyboardButton(text="✏️ Изменить запрос", callback_data="video:change_prompt"),
+                InlineKeyboardButton(text="❌ Отмена", callback_data="video:cancel"),
+            ],
+        ]
+    )
+
+
+def video_examples_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎬 Изменить свое видео", callback_data=MENU_VIDEO_NEW_CB)],
+            [InlineKeyboardButton(text="⬅️ В главное меню", callback_data=MENU_HOME_CB)],
+        ]
+    )
+
+
+def video_history_keyboard(jobs) -> InlineKeyboardMarkup:
+    rows = []
+    for job in jobs:
+        status_icon = "✅" if job.status == "done" else ("⏳" if job.status in ("pending", "processing") else "❌")
+        rows.append([
+            InlineKeyboardButton(
+                text=f"{status_icon} {job.created_at:%d.%m %H:%M} | {job.user_prompt[:25]}...",
+                callback_data=f"video_job:{job.id}",
+            )
+        ])
+    rows.append([InlineKeyboardButton(text="🎬 Новая обработка", callback_data=MENU_VIDEO_NEW_CB)])
+    rows.append([InlineKeyboardButton(text="⬅️ В меню", callback_data=MENU_HOME_CB)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -91,7 +199,7 @@ def tariffs_keyboard(tariffs) -> InlineKeyboardMarkup:
     rows = [
         [
             InlineKeyboardButton(
-                text=f"{tariff.title} — {tariff.generations} ген. — {_format_price(tariff.price)}"
+                text=f"{tariff.title} — {tariff.generations} кр. — {_format_price(tariff.price)}"
                 + (" 🎁" if tariff.is_promo else ""),
                 callback_data=f"topup:pkg:{tariff.id}",
             )
@@ -144,93 +252,4 @@ def cancel_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")]])
 
 
-def styles_keyboard(styles) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=style.name, callback_data=f"style:{style.id}")]
-        for style in styles
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
-def clothing_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=label, callback_data=f"clothing:{value}")]
-        for value, label in CLOTHING_LABELS.items()
-    ]
-    rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"clothing:{SKIP}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def background_type_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=label, callback_data=f"bg:{value}")]
-        for value, label in BACKGROUND_LABELS.items()
-    ]
-    rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data=f"bg:{SKIP}")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def background_color_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text=label, callback_data=f"bgcolor:{hexval}")]
-        for label, hexval in BACKGROUND_COLOR_PRESETS.items()
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def photos_keyboard(count: int) -> InlineKeyboardMarkup:
-    rows = []
-    if count >= 1:
-        rows.append([InlineKeyboardButton(text=f"✅ Готово ({count} фото)", callback_data="photos_done")])
-    rows.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def confirm_keyboard() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🚀 Сгенерировать", callback_data="confirm_yes")],
-            [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel")],
-        ]
-    )
-
-
-def order_result_keyboard(order_id, *, ask_review: bool = True) -> InlineKeyboardMarkup:
-    """Кнопки под сообщением с готовым результатом (см.
-    apps.telegram_bot.notifications.notify_order_result) — «Скинуть ещё раз»
-    работает и спустя долгое время: заново берёт presigned-ссылку на S3, а не
-    полагается на то, что файл ещё жив в кеше Telegram. Пока отзыв не
-    оставлен (ask_review=True), сверху ряд звёзд для оценки (bot/handlers/review.py)."""
-    rows = []
-    if ask_review:
-        rows.append(
-            [
-                InlineKeyboardButton(text=f"{n}⭐", callback_data=f"{REVIEW_RATE_CB}:{order_id}:{n}")
-                for n in range(1, 6)
-            ]
-        )
-    rows.append([InlineKeyboardButton(text="📷 Скинуть ещё раз", callback_data=f"show_photo:{order_id}")])
-    rows.append([InlineKeyboardButton(text="⬅️ В меню", callback_data=MENU_HOME_CB)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-def review_comment_keyboard(order_id) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⏭ Без комментария", callback_data=f"{REVIEW_SKIP_CB}:{order_id}")],
-        ]
-    )
-
-
-def history_keyboard(done_orders: list) -> InlineKeyboardMarkup:
-    rows = [
-        [
-            InlineKeyboardButton(
-                text=f"📷 Фото от {order.created_at.strftime('%d.%m')}",
-                callback_data=f"show_photo:{order.id}",
-            )
-        ]
-        for order in done_orders
-    ]
-    rows.append([InlineKeyboardButton(text="⬅️ В меню", callback_data=MENU_HOME_CB)])
-    return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -83,7 +83,6 @@ class PaymentAdmin(admin.ModelAdmin):
     list_filter = ("status", "is_test", "created_at", "promo_code", "utm_source")
     search_fields = ("user__username", "user__email", "id", "yclid", "utm_campaign")
     readonly_fields = ("raw_result_payload", "purchase_reported_at")
-    raw_id_fields = ("unlock_result",)
     # Кнопка «Отчёт по продажам» над списком платежей
     change_list_template = "admin/billing/payment/change_list.html"
 

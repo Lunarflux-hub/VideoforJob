@@ -4,59 +4,15 @@ from django.contrib import admin
 from django.urls import include, path
 from django.views.generic import TemplateView
 
-from apps.billing.views import BotPayRedirectView, PaymentPageView, UnlockPayLinkView
-from apps.photos.views import LandingView
+from apps.billing.views import BotPayRedirectView
 
 urlpatterns = [
-    path("admin/", admin.site.urls),  # оставил один раз
-    path("api/auth/", include("apps.accounts.urls")),
-    path("api/auth/", include("apps.social_auth.urls")),
-    path("api/", include("apps.photos.urls")),
-    path("api/", include("apps.support.urls")),
+    path("admin/", admin.site.urls),
     path("api/billing/", include("apps.billing.urls")),
-    path("api/carousels/", include("apps.carousels.urls")),
-    path(
-        "",
-        LandingView.as_view(
-            extra_context={
-                "google_client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
-                "yandex_client_id": settings.YANDEX_OAUTH_CLIENT_ID,
-            },
-        ),
-        name="home",
-    ),
-    path(
-        "login/",
-        TemplateView.as_view(
-            template_name="login.html",
-            extra_context={
-                "google_client_id": settings.GOOGLE_OAUTH_CLIENT_ID,
-                "yandex_client_id": settings.YANDEX_OAUTH_CLIENT_ID,
-            },
-        ),
-        name="login",
-    ),
-    # Файл подтверждения прав на сайт в Яндекс.Вебмастере
-    path(
-        "yandex_2428af10fa3df26d.html",
-        TemplateView.as_view(template_name="yandex_2428af10fa3df26d.html", content_type="text/html"),
-        name="yandex_verification",
-    ),
-    path("workstation/", TemplateView.as_view(template_name="workstation.html"), name="workstation"),
-    path("payment/", PaymentPageView.as_view(), name="payment"),
+    path("billing/pay/<int:payment_id>/", BotPayRedirectView.as_view(), name="billing_bot_pay"),
     path("billing/success/", TemplateView.as_view(template_name="billing_success.html"), name="billing_success"),
     path("billing/fail/", TemplateView.as_view(template_name="billing_fail.html"), name="billing_fail"),
-    path("billing/history/", TemplateView.as_view(template_name="billing_history.html"), name="billing_history"),
-    path("billing/pay/<int:payment_id>/", BotPayRedirectView.as_view(), name="billing_bot_pay"),
-    path("billing/unlock/<int:result_id>/", UnlockPayLinkView.as_view(), name="billing_unlock_pay"),
-    path("results/", TemplateView.as_view(template_name="results.html"), name="results"),
-    # Бета: страница-оболочка открывается всем, но без доступа (см.
-    # apps/carousels/access.py) API отвечает 404 и страница это показывает.
-    path("carousels/", TemplateView.as_view(template_name="carousels.html"), name="carousels"),
-    # ---------- НОВЫЙ МАРШРУТ ДЛЯ ПОЛИТИКИ ----------
     path("policy/", TemplateView.as_view(template_name="policy.html"), name="policy"),
-    # ---------- НОВЫЙ МАРШРУТ ДЛЯ СТРАНИЦЫ ПОДДЕРЖКИ ----------
-    path("support/", TemplateView.as_view(template_name="support.html"), name="support"),
 ]
 
 if settings.DEBUG:

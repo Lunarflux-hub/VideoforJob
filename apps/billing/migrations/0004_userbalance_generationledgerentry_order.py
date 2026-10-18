@@ -10,7 +10,6 @@ class Migration(migrations.Migration):
     dependencies = [
         ('auth', '0012_alter_user_first_name_max_length'),
         ('billing', '0003_rename_credits_to_generations'),
-        ('photos', '0002_order_customization_fields'),
     ]
 
     operations = [
@@ -21,10 +20,5 @@ class Migration(migrations.Migration):
                 ('generations', models.IntegerField(default=0)),
                 ('updated_at', models.DateTimeField(auto_now=True)),
             ],
-        ),
-        migrations.AddField(
-            model_name='generationledgerentry',
-            name='order',
-            field=models.ForeignKey(blank=True, help_text='Заказ, на который списана генерация (только для kind=spend)', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='ledger_entries', to='photos.order'),
         ),
     ]

@@ -1,23 +1,30 @@
+import logging
 import socket
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from django.conf import settings
 
-from .handlers import balance, billing, generation, history, profile, review, start, support
+from .handlers import (
+    balance,
+    billing,
+    profile,
+    start,
+    support,
+    video,
+)
+
+logger = logging.getLogger(__name__)
 
 
 def build_bot() -> Bot:
-    # Хостинг блокирует исходящий IPv4 до api.telegram.org (наблюдалось на
-    # проде — TCP SYN уходит в никуда, аiohttp зависает до таймаута), при
-    # этом IPv6 до Telegram работает нормально. Публичного параметра для
-    # этого в AiohttpSession нет, поэтому принудительно подменяем family
-    # у внутреннего TCPConnector — единственный способ без форка aiogram.
     session = AiohttpSession()
-    session._connector_init["family"] = socket.AF_INET6
+    if getattr(settings, "TELEGRAM_FORCE_IPV6", False):
+        session._connector_init["family"] = socket.AF_INET6
 
     return Bot(
         token=settings.TELEGRAM_BOT_TOKEN,
@@ -27,19 +34,31 @@ def build_bot() -> Bot:
 
 
 def build_dispatcher() -> Dispatcher:
-    # Redis, а не MemoryStorage: состояние диалога (какой шаг заказа сейчас
-    # проходит пользователь) переживает перезапуск контейнера бота при
-    # деплое.
-    storage = RedisStorage.from_url(settings.REDIS_URL)
+    storage = None
+    if getattr(settings, "REDIS_URL", None):
+        try:
+            import redis
+            client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=0.5)
+            client.ping()
+            storage = RedisStorage.from_url(settings.REDIS_URL)
+            logger.info("FSM storage: Redis (%s)", settings.REDIS_URL)
+        except Exception as exc:
+            logger.info("Redis недоступен (%s), используем MemoryStorage: %s", settings.REDIS_URL, exc)
+            storage = MemoryStorage()
+    else:
+        storage = MemoryStorage()
+
     dp = Dispatcher(storage=storage)
 
+    # Порядок регистрации роутеров:
+    # 1. start (команды /start, /cancel)
+    # 2. video (основной сценарий VideoLab AI)
+    # 3. биллинг, баланс, профиль, поддержка
     dp.include_router(start.router)
-    dp.include_router(generation.router)
-    dp.include_router(history.router)
+    dp.include_router(video.router)
     dp.include_router(balance.router)
     dp.include_router(billing.router)
     dp.include_router(profile.router)
     dp.include_router(support.router)
-    dp.include_router(review.router)
 
     return dp

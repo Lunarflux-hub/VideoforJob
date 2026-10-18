@@ -117,12 +117,4 @@ def min_package_price() -> str | None:
 
 
 def unlock_offers() -> tuple[GenerationPackage | None, GenerationPackage | None]:
-    """Что предложить под бесплатным превью: (одно фото, пакет).
-    Одно фото — самый дешёвый публичный пакет на 1 генерацию («Старт»,
-    49 ₽) — оплата прямо этого снимка; пакет — выделенный («Оптимальный»,
-    5 фото), второй вариант рядом. Оба из БД, не хардкод."""
-    public = _public_packages()
-    singles = sorted((p for p in public if p.generations == 1), key=lambda p: p.price)
-    single = singles[0] if singles else None
-    bundle = next((p for p in public if p.is_featured and p != single), None)
-    return single, bundle
+    return None, None

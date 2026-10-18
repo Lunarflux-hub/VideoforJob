@@ -17,47 +17,11 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-_API_BASE = "https://api.telegram.org/bot{token}/{method}"
-
-# Подпись под готовым фото. После оценки (bot/handlers/review.py) подпись
-# редактируется — к ней дописывается оценка, поэтому текст вынесен сюда.
-ORDER_RESULT_CAPTION = "✅ Ваше фото готово!"
-
-
-def _menu_home_markup() -> str:
-    """JSON для reply_markup сырого вызова Bot API (см. _call) — тот же
-    инлайн-кнопка «В меню», что и в обычных ответах бота (bot/keyboards.py),
-    просто отправляется не через aiogram, а напрямую HTTP-запросом."""
-    from .bot import keyboards  # локальный импорт — избегаем цикла apps на старте
-
-    return keyboards.back_to_menu_keyboard().model_dump_json(exclude_none=True)
-
-
-def _order_result_markup(order_id) -> str:
-    """Как _menu_home_markup(), но добавляет звёзды для отзыва (см.
-    bot/handlers/review.py) и кнопку «Скинуть ещё раз» — она
-    живёт на сообщении в чате сколько угодно долго и работает даже спустя
-    месяцы: обработчик show_photo (bot/handlers/history.py) при нажатии
-    заново берёт presigned-ссылку на S3, а не переотправляет закешированный
-    в Telegram файл."""
-    from .bot import keyboards
-
-    return keyboards.order_result_keyboard(order_id).model_dump_json(exclude_none=True)
-
-
 def _call(method: str, **params) -> None:
     if not settings.TELEGRAM_BOT_TOKEN:
         return
     url = _API_BASE.format(token=settings.TELEGRAM_BOT_TOKEN, method=method)
 
-    # Хостинг блокирует исходящий IPv4 до api.telegram.org (та же причина,
-    # что и в bot/dispatcher.py::build_bot, где для aiogram форсируют IPv6 на
-    # уровне aiohttp-коннектора) — по умолчанию requests/urllib3 сначала
-    # пробуют IPv4-адрес из getaddrinfo и зависают на нём до таймаута, только
-    # потом переходят к IPv6. Форсируем IPv6 явно и только на время этого
-    # запроса — чтобы не тратить время и не задеть остальные исходящие
-    # HTTP-запросы процесса (Polza.ai, Yandex S3, Resend), которым IPv4
-    # нужен как обычно.
     original_allowed_gai_family = urllib3_connection.allowed_gai_family
     urllib3_connection.allowed_gai_family = lambda: socket.AF_INET6
     try:
@@ -68,48 +32,6 @@ def _call(method: str, **params) -> None:
         logger.exception("Не удалось вызвать Telegram API %s", method)
     finally:
         urllib3_connection.allowed_gai_family = original_allowed_gai_family
-
-
-def notify_order_result(order) -> None:
-    """
-    Тихо ничего не делает, если у заказа нет привязанного TelegramProfile
-    (значит заказ пришёл с сайта, а не из бота).
-    """
-    profile = getattr(order.user, "telegram_profile", None) if order.user_id else None
-    if profile is None:
-        return
-
-    from apps.photos.models import Order  # локальный импорт — избегаем цикла apps
-    from apps.photos.services import storage
-
-    if order.status == Order.Status.DONE:
-        result = order.results.first()
-        if result is None:
-            _call(
-                "sendMessage",
-                chat_id=profile.telegram_id,
-                text="Готово, но результат не найден — обратитесь в поддержку.",
-                reply_markup=_menu_home_markup(),
-            )
-            return
-        _call(
-            "sendPhoto",
-            chat_id=profile.telegram_id,
-            # delivery_key — для неоплаченного бесплатного превью только копия со знаком
-            photo=storage.generate_presigned_url(result.delivery_key),
-            caption=f"{ORDER_RESULT_CAPTION}\n\nОцените результат — это поможет нам стать лучше:",
-            reply_markup=_order_result_markup(order.id),
-        )
-    elif order.status == Order.Status.FAILED:
-        _call(
-            "sendMessage",
-            chat_id=profile.telegram_id,
-            text=(
-                "❌ Не удалось сгенерировать фото. "
-                "Попробуйте создать заказ заново из меню бота."
-            ),
-            reply_markup=_menu_home_markup(),
-        )
 
 
 def notify_payment_result(payment) -> None:

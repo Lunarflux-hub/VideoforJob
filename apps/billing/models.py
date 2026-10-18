@@ -157,7 +157,7 @@ class Payment(models.Model):
     )
     amount = models.DecimalField(max_digits=10, decimal_places=2)   # OutSum
     currency = models.CharField(max_length=3, default="RUB")
-    generations_granted = models.PositiveIntegerField()
+    generations_granted = models.DecimalField(max_digits=10, decimal_places=1, default=Decimal("0.0"))
     promo_code = models.ForeignKey(
         PromoCode,
         null=True,
@@ -166,15 +166,6 @@ class Payment(models.Model):
         related_name="payments",
     )
     discount_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0"))
-    # «Скачать в HD» без генераций на балансе: после подтверждённой оплаты
-    # вебхук сам спишет 1 генерацию и разблокирует этот результат
-    unlock_result = models.ForeignKey(
-        "photos.GeneratedResult",
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="unlock_payments",
-    )
     status = models.CharField(
         max_length=10,
         choices=Status.choices,
@@ -215,7 +206,7 @@ class Payment(models.Model):
 
 class UserBalance(models.Model):
     """
-    Кэш текущего баланса генераций пользователя. Источник правды для быстрого
+    Кэш текущего баланса кредитов/генераций пользователя. Источник правды для быстрого
     чтения; GenerationLedgerEntry остаётся неизменяемым журналом-аудитом.
     Обновляется только внутри services.py под select_for_update(), чтобы
     конкурентные списания/начисления не гонялись друг с другом.
@@ -227,15 +218,20 @@ class UserBalance(models.Model):
         related_name="balance",
         primary_key=True,
     )
-    generations = models.IntegerField(default=0)
+    generations = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal("0.00"))
     updated_at = models.DateTimeField(auto_now=True)
 
+    @property
+    def credits(self) -> Decimal:
+        return self.generations
+
     def __str__(self):
-        return f"{self.user} — {self.generations} ген."
+        val = f"{self.generations:.2f}".rstrip("0").rstrip(".")
+        return f"{self.user} — {val} кр."
 
 
 class GenerationLedgerEntry(models.Model):
-    """Неизменяемый журнал начислений/списаний генераций – источник правды для баланса."""
+    """Неизменяемый журнал начислений/списаний генераций/кредитов – источник правды для баланса."""
 
     class Kind(models.TextChoices):
         TOPUP = "topup", "Пополнение"
@@ -248,21 +244,21 @@ class GenerationLedgerEntry(models.Model):
         related_name="generation_entries"
     )
     kind = models.CharField(max_length=10, choices=Kind.choices)
-    amount = models.IntegerField()          # положительный для пополнения, отрицательный для списания
-    balance_after = models.IntegerField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)          # положительный для пополнения, отрицательный для списания
+    balance_after = models.DecimalField(max_digits=10, decimal_places=2)
     payment = models.ForeignKey(
         Payment,
         null=True,
         blank=True,
         on_delete=models.SET_NULL
     )
-    order = models.ForeignKey(
-        "photos.Order",
+    video_job = models.ForeignKey(
+        "videos.VideoJob",
         null=True,
         blank=True,
         on_delete=models.SET_NULL,
         related_name="ledger_entries",
-        help_text="Заказ, на который списана генерация (только для kind=spend)",
+        help_text="Заказ на видео, на который списана генерация или оформлен возврат",
     )
     created_at = models.DateTimeField(auto_now_add=True)
 

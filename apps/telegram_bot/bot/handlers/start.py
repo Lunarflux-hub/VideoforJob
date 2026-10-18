@@ -7,6 +7,8 @@ from aiogram.types import CallbackQuery, Message
 from asgiref.sync import sync_to_async
 from django.conf import settings
 
+from apps.videos.services.analytics import track_event
+
 from .. import keyboards, services
 from ..ui import finish_flow, render, return_to_parent, start_wizard, start_wizard_photo
 
@@ -21,19 +23,32 @@ WELCOME_IMAGE_PATH = Path(__file__).resolve().parents[2] / "assets" / "welcome.p
 
 def _welcome_text() -> str:
     offer_url = f"{settings.FRONTEND_URL}/policy/?doc=offer"
+    price_single = getattr(settings, "VIDEO_PRICE_SINGLE", 299)
+    retention_hours = getattr(settings, "VIDEO_RETENTION_HOURS", 48)
+
     return (
-        "👋 <b>Добро пожаловать в ShotforJob!</b>\n\n"
-        "Я сгенерирую профессиональное фото по вашим снимкам.\n\n"
-        f'Перед использованием ознакомьтесь с <a href="{offer_url}">публичной офертой</a>.'
+        "👋 <b>Добро пожаловать в VideoLab AI!</b>\n\n"
+        "🎬 <b>Быстрое редактирование видео с помощью нейросетей:</b>\n"
+        "Загрузите короткий ролик (до 10 секунд) → опишите желаемые изменения → получите результат.\n\n"
+        "💡 <b>Нейросеть Gemini Omni умеет:</b>\n"
+        "• Менять освещение, закатный/ночной свет и атмосферу\n"
+        "• Добавлять кинематографичные эффекты, дым, неон, сияние\n"
+        "• Стилизовать сцену (винтажная 35мм плёнка, коммерческий глянец)\n"
+        "• Сохранять оригинальное движение персонажа и камеры\n\n"
+        f"💰 <b>Стоимость:</b> от {price_single:.0f} ₽ за обработку (пакеты выгоднее)\n"
+        f"🔒 <b>Конфиденциальность:</b> приватное хранение, автоматическое удаление файлов через {retention_hours} ч.\n\n"
+        f'Перед использованием ознакомьтесь с <a href="{offer_url}">правилами сервиса</a>.'
     )
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await sync_to_async(services.get_or_create_profile)(
+    profile = await sync_to_async(services.get_or_create_profile)(
         message.from_user.id, message.from_user.username or ""
     )
+
+    await sync_to_async(track_event)("bot_started", user=profile.user)
 
     text = f"{_welcome_text()}\n\nВыберите действие:\n\n{SUPPORT_LINE}"
     if WELCOME_IMAGE_PATH.exists():

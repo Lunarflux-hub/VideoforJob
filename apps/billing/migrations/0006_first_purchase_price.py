@@ -7,13 +7,13 @@ def set_promo_on_starter(apps, schema_editor):
     GenerationPackage = apps.get_model("billing", "GenerationPackage")
     starter, _ = GenerationPackage.objects.update_or_create(
         title="Стартовый",
-        defaults=dict(first_purchase_price=Decimal("49.00")),
+        defaults=dict(
+            price=Decimal("99.00"),
+            generations=1,
+            is_active=True,
+            first_purchase_price=Decimal("49.00"),
+        ),
     )
-    if starter.price is None or starter.price == 0:
-        starter.price = Decimal("99.00")
-        starter.generations = starter.generations or 1
-        starter.is_active = True
-        starter.save()
 
 
 def unset_promo(apps, schema_editor):
